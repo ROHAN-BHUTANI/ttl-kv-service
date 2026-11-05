@@ -1,0 +1,101 @@
+package store
+
+import (
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+)
+
+func newWithClock(t *time.Time) *Store {
+	s := New()
+	s.now = func() time.Time { return *t }
+	return s
+}
+
+func TestSetGetDelete(t *testing.T) {
+	s := New()
+	s.Set("a", []byte("1"), 0)
+	if v, ok := s.Get("a"); !ok || string(v) != "1" {
+		t.Fatalf("got %q,%v", v, ok)
+	}
+	if !s.Delete("a") {
+		t.Fatal("expected delete to report true")
+	}
+	if _, ok := s.Get("a"); ok {
+		t.Fatal("key should be gone")
+	}
+	if s.Delete("a") {
+		t.Fatal("second delete should report false")
+	}
+}
+
+func TestTTLExpiry(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := newWithClock(&now)
+	s.Set("k", []byte("v"), 10*time.Second)
+
+	now = now.Add(9 * time.Second)
+	if _, ok := s.Get("k"); !ok {
+		t.Fatal("key should still be alive at 9s")
+	}
+	now = now.Add(1 * time.Second) // exactly at expiry
+	if _, ok := s.Get("k"); ok {
+		t.Fatal("key should be expired at 10s")
+	}
+	if s.Len() != 0 {
+		t.Fatalf("lazy delete should have removed the key, len=%d", s.Len())
+	}
+}
+
+func TestSweepRemovesOnlyExpired(t *testing.T) {
+	now := time.Unix(0, 0)
+	s := newWithClock(&now)
+	s.Set("short", []byte("x"), time.Second)
+	s.Set("long", []byte("y"), time.Hour)
+	s.Set("forever", []byte("z"), 0)
+
+	now = now.Add(2 * time.Second)
+	if n := s.sweep(); n != 1 {
+		t.Fatalf("swept %d, want 1", n)
+	}
+	if s.Len() != 2 {
+		t.Fatalf("len=%d, want 2", s.Len())
+	}
+}
+
+func TestValueIsCopied(t *testing.T) {
+	s := New()
+	in := []byte("abc")
+	s.Set("k", in, 0)
+	in[0] = 'X'
+	out, _ := s.Get("k")
+	if string(out) != "abc" {
+		t.Fatalf("store must copy on write, got %q", out)
+	}
+	out[0] = 'Y'
+	again, _ := s.Get("k")
+	if string(again) != "abc" {
+		t.Fatalf("store must copy on read, got %q", again)
+	}
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	s := New()
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				k := fmt.Sprintf("k%d", i%20)
+				s.Set(k, []byte("v"), time.Minute)
+				s.Get(k)
+				if i%7 == 0 {
+					s.Delete(k)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+}
