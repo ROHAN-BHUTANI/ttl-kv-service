@@ -42,6 +42,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/keys/{key}", s.put)
 	mux.HandleFunc("GET /v1/keys/{key}", s.get)
 	mux.HandleFunc("DELETE /v1/keys/{key}", s.del)
+	mux.HandleFunc("GET /v1/keys", s.list)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK) // liveness: process is up
 	})
@@ -106,4 +107,14 @@ func httpError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	keys := s.store.Keys()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_ = json.NewEncoder(w).Encode(map[string][]string{
+		"keys": keys,
+	})
 }

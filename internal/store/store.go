@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -99,4 +100,27 @@ func (s *Store) RunJanitor(ctx context.Context, interval time.Duration) {
 			s.sweep()
 		}
 	}
+}
+
+// Keys returns all non-expired keys in sorted order.
+// Expired entries are removed during this operation.
+func (s *Store) Keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	keys := make([]string, 0, len(s.data))
+
+	for key, e := range s.data {
+		if e.expired(now) {
+			delete(s.data, key)
+			continue
+		}
+
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }

@@ -99,3 +99,54 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestKeysReturnsActiveKeys verifies that active keys are returned alphabetically.
+func TestKeysReturnsActiveKeys(t *testing.T) {
+	s := New()
+
+	s.Set("banana", []byte("1"), 0)
+	s.Set("apple", []byte("2"), 0)
+	s.Set("cherry", []byte("3"), 0)
+
+	keys := s.Keys()
+
+	expected := []string{"apple", "banana", "cherry"}
+
+	if len(keys) != len(expected) {
+		t.Fatalf("got %d keys, want %d", len(keys), len(expected))
+	}
+
+	for i, key := range expected {
+		if keys[i] != key {
+			t.Fatalf("keys[%d] = %q, want %q", i, keys[i], key)
+		}
+	}
+}
+
+// TestKeysExcludesExpiredKeys verifies expired keys are excluded.
+func TestKeysExcludesExpiredKeys(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := newWithClock(&now)
+
+	s.Set("active", []byte("1"), time.Hour)
+	s.Set("expired", []byte("2"), time.Second)
+
+	now = now.Add(2 * time.Second)
+
+	keys := s.Keys()
+
+	if len(keys) != 1 || keys[0] != "active" {
+		t.Fatalf("got keys %v, want [active]", keys)
+	}
+}
+
+// TestKeysEmptyStore verifies an empty store returns no keys.
+func TestKeysEmptyStore(t *testing.T) {
+	s := New()
+
+	keys := s.Keys()
+
+	if len(keys) != 0 {
+		t.Fatalf("got %v, want empty keys", keys)
+	}
+}
