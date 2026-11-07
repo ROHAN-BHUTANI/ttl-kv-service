@@ -137,3 +137,51 @@ func TestListKeysEmptyStore(t *testing.T) {
 		t.Fatalf("expected empty keys array, got: %s", rec.Body.String())
 	}
 }
+
+// TestMetricsEndpoint verifies that /metrics returns HTTP 200 and exposes expvar counters.
+func TestMetricsEndpoint(t *testing.T) {
+	srv := New(store.New())
+	handler := srv.Handler()
+
+	rec := do(t, handler, http.MethodGet, "/metrics", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "requests_total") {
+		t.Fatalf("metrics body does not contain requests_total: %s", body)
+	}
+}
+
+// TestReadinessTransitions verifies toggling readiness between ready and not-ready states.
+func TestReadinessTransitions(t *testing.T) {
+	srv := New(store.New())
+	handler := srv.Handler()
+
+	// Initial state: ready
+	rec1 := do(t, handler, http.MethodGet, "/readyz", "")
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("initial readyz status = %d, want %d", rec1.Code, http.StatusOK)
+	}
+
+	// Transition to shutdown: failing readiness
+	srv.SetReady(false)
+	rec2 := do(t, handler, http.MethodGet, "/readyz", "")
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("after SetReady(false) status = %d, want %d", rec2.Code, http.StatusServiceUnavailable)
+	}
+
+	// Liveness must remain healthy even when readiness is false
+	recHealth := do(t, handler, http.MethodGet, "/healthz", "")
+	if recHealth.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want %d", recHealth.Code, http.StatusOK)
+	}
+
+	// Transition back to ready (recovery scenario)
+	srv.SetReady(true)
+	rec3 := do(t, handler, http.MethodGet, "/readyz", "")
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("after SetReady(true) status = %d, want %d", rec3.Code, http.StatusOK)
+	}
+}

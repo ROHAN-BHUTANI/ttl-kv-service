@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -149,4 +150,58 @@ func TestKeysEmptyStore(t *testing.T) {
 	if len(keys) != 0 {
 		t.Fatalf("got %v, want empty keys", keys)
 	}
+}
+
+// TestRunJanitorStopsOnCancel verifies that the background janitor goroutine
+// terminates immediately and cleanly when its context is cancelled.
+func TestRunJanitorStopsOnCancel(t *testing.T) {
+	s := New()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		s.RunJanitor(ctx, 10*time.Millisecond)
+		close(done)
+	}()
+
+	// Signal cancellation
+	cancel()
+
+	select {
+	case <-done:
+		// Janitor stopped cleanly as expected
+	case <-time.After(1 * time.Second):
+		t.Fatal("RunJanitor did not terminate after context cancellation")
+	}
+}
+
+// TestRunJanitorPeriodicSweep verifies that the background janitor automatically
+// sweeps and deletes expired keys on its ticker interval.
+func TestRunJanitorPeriodicSweep(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := newWithClock(&now)
+
+	s.Set("temp", []byte("val"), 10*time.Millisecond)
+	if s.Len() != 1 {
+		t.Fatalf("expected 1 item, got %d", s.Len())
+	}
+
+	// Advance clock past expiration
+	now = now.Add(50 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go s.RunJanitor(ctx, 10*time.Millisecond)
+
+	// Poll until swept or timeout
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if s.Len() == 0 {
+			return // Successfully swept
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("janitor failed to sweep expired keys, store len=%d", s.Len())
 }
